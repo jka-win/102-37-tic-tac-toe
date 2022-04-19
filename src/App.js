@@ -1,15 +1,27 @@
 
-import React, {useState} from "react"
+import React, { useState } from "react"
 
-const Square = props =>
-    <button className="square" onClick={props.onClick}>
-        {props.value}
-    </button>;
+const Square = props => {
+    const style = props.highlight ? {
+        backgroundColor: "yellow"
+    } : null;
+
+    return (
+        <button className="square" style={style} onClick={props.onClick}>
+            {props.value}
+        </button>
+    );
+};
 
 class Board extends React.Component {
     renderSquare(x, y) {
+        const highlight = this.props.highlight ?
+            this.props.highlight.find(cell => x === cell.x && y === cell.y)
+            : null;
+
         return <Square key={`${x},${y}`}
-            value={this.props.squares[x][y]} 
+            value={this.props.squares[x][y]}
+            highlight={highlight}
             onClick={() => this.props.onClick(x, y)} />;
     }
 
@@ -43,9 +55,11 @@ class Game extends React.Component {
         this.state = {
             history: [{
                 squares: emptySquares,
+                stepNumber: 0,
             }],
             stepNumber: 0,
             xIsNext: true,
+            sort: "asc",
         };
     }
 
@@ -60,10 +74,14 @@ class Game extends React.Component {
         if (calculateWinner(squares, this.props.winCondition) || squares[x][y]) {
             return;
         }
-        squares[x][y] = this.currentMarker();
+
+        const marker = this.currentMarker();
+        squares[x][y] = marker;
         this.setState({
             history: history.concat([{
-                squares: squares
+                squares: squares,
+                lastPlayed: { x, y, marker },
+                stepNumber: history.length,
             }]),
             stepNumber: history.length,
             xIsNext: !this.state.xIsNext,
@@ -81,33 +99,54 @@ class Game extends React.Component {
         const history = this.state.history;
         const current = history[this.state.stepNumber];
         const winner = calculateWinner(current.squares, this.props.winCondition);
-        
-        const moves = history.map((step, move) => {
-            const desc = move ? `Go to move #${move}` : "Go to game start";
+        const highlight = winner ? winner.cells : null;
+        const draw = !current.squares.find(row => row.find(cell => !cell) !== undefined);
+
+        const sorted = this.state.sort === "asc" ? history : [...history].reverse();
+        const moves = sorted.map(step => {
+            const style = step.stepNumber === this.state.stepNumber ? {
+                fontWeight: "bold"
+            } : null;
+            const desc = step.stepNumber ? `Go to move #${step.stepNumber}` : "Go to game start";
             return (
-                <li key={move}>
-                    <button onClick={() => this.jumpTo(move)}>{desc}</button>
-                </li>
+                <div key={step.stepNumber}>
+                    <button style={style} onClick={() => this.jumpTo(step.stepNumber)}>{desc}</button>
+                    {step.lastPlayed ?
+                        <em>{step.lastPlayed.marker} at row {step.lastPlayed.x}, column {step.lastPlayed.y}</em>
+                        : null}
+                </div>
             );
         });
 
         let status;
         if (winner) {
-            status = `Winner: ${winner}`;
+            status = `Winner: ${winner.marker}`;
+        } else if (draw) {
+            status = "It's a draw!";
         } else {
             status = `Next player: ${this.currentMarker()}`;
         }
+
+        const handleSortChange = e => this.setState({
+            sort: e.target.value,
+        });
 
         return (
             <div className="game">
                 <div className="game-board">
                     <Board rows={this.props.rows} columns={this.props.columns}
-                        squares={current.squares}
+                        squares={current.squares} highlight={highlight}
                         onClick={(x, y) => this.handleClick(x, y)} />
                 </div>
                 <div className="game-info">
                     <div>{status}</div>
-                    <ol>{moves}</ol>
+                    <div onChange={handleSortChange}>
+                        <input type="radio" value="asc" name="sort"
+                            checked={this.state.sort === "asc"} />Ascending
+                        <input type="radio" value="dec" name="sort"
+                            checked={this.state.sort === "dec"} />Descending
+                    </div>
+                    <div>{moves}</div>
                 </div>
             </div>
         );
@@ -116,21 +155,23 @@ class Game extends React.Component {
 
 function calculateWinner(squares, winCondition) {
     const testCase = (winner, fx, fy) => {
+        const cells = [{ x: fx(0), y: fy(0) }];
         for (let i = 1; i < winCondition; i++) {
             if (squares[fx(i)][fy(i)] !== winner) {
                 return false;
             }
+            cells.push({ x: fx(i), y: fy(i) });
         }
-        return true;
+        return cells;
     }
 
     for (let x = 0; x < squares.length; x++) {
         for (let y = 0; y < squares[x].length; y++) {
             const winner = squares[x][y];
-            if (winner && ((
-                    squares.length - x >= winCondition
-                    && testCase(winner, i => x + i, i => y)
-                ) || (
+            const result = winner && ((
+                squares.length - x >= winCondition
+                && testCase(winner, i => x + i, i => y)
+            ) || (
                     squares[x].length - y >= winCondition
                     && testCase(winner, i => x, i => y + i)
                 ) || (
@@ -141,8 +182,10 @@ function calculateWinner(squares, winCondition) {
                     squares.length - x >= winCondition
                     && y >= winCondition - 1
                     && testCase(winner, i => x + i, i => y - i)
-                ))) {
-                return winner;
+                ));
+
+            if (result) {
+                return { marker: winner, cells: result };
             }
         }
     }
@@ -150,9 +193,9 @@ function calculateWinner(squares, winCondition) {
 }
 
 const App = () => {
-    const defaultRows = 9;
-    const defaultColumns = 16;
-    const defaultWinCondition = 5;
+    const defaultRows = 3;
+    const defaultColumns = 3;
+    const defaultWinCondition = 3;
 
     const [input, setInput] = useState({
         rows: defaultRows,
@@ -167,8 +210,8 @@ const App = () => {
     });
 
     const handleClick = () => setGame(
-        <Game key={`${input.rows}/${input.columns}/${input.winCondition}`} 
-            rows={input.rows} columns={input.columns} 
+        <Game key={`${input.rows}/${input.columns}/${input.winCondition}`}
+            rows={input.rows} columns={input.columns}
             winCondition={input.winCondition} />
     );
 
